@@ -1,0 +1,174 @@
+version: "3.9"
+
+services:
+  nginx-proxy:
+    image: nginxproxy/nginx-proxy:alpine
+    container_name: nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/ssl/cloudflare:/etc/nginx/certs:ro
+      - ./vhost.d:/etc/nginx/vhost.d
+      - ./html:/usr/share/nginx/html
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+    restart: unless-stopped
+    mem_limit: 64m
+    cpus: 0.15
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+
+  flask_app:
+    build:
+      context: .
+    container_name: flask_app
+    command: gunicorn -k gevent --workers=1 --timeout=120 -b 0.0.0.0:5000 app:app
+    expose:
+      - "5000"
+    environment:
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+      - FLASK_APP=app.py
+      - VIRTUAL_HOST=api.neeyatai.com
+      - VIRTUAL_PORT=5000
+      - VIRTUAL_PROTO=http
+      - CERT_NAME=api.neeyatai.com
+      - PYTHONUNBUFFERED=1
+    labels:
+      - "com.nginxproxy.proxy_connect_timeout=300s"
+      - "com.nginxproxy.proxy_read_timeout=300s"
+      - "com.nginxproxy.proxy_send_timeout=300s"
+      - "com.nginxproxy.client_max_body_size=10m"
+
+    env_file:
+      - .env
+    depends_on:
+      - mongo
+      - redis
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.4
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost', 5000))"]
+      interval: 45s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+
+
+  jenkins:
+    build:
+      context: .
+      dockerfile: Dockerfile.jenkins
+    container_name: jenkins
+    ports:
+      - "8080:8080"
+
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /opt/apache-jmeter-5.6.3:/opt/apache-jmeter-5.6.3
+      - /usr/lib/jvm/java-17-amazon-corretto:/usr/lib/jvm/java-17-amazon-corretto
+
+    environment:
+      - VIRTUAL_HOST=jenkins.neeyatai.com
+      - VIRTUAL_PORT=8080
+      - VIRTUAL_PROTO=http
+      - CERT_NAME=jenkins.neeyatai.com
+      - PYTHONUNBUFFERED=1
+    labels:
+      - "com.nginxproxy.proxy_connect_timeout=300s"
+      - "com.nginxproxy.proxy_read_timeout=300s"
+      - "com.nginxproxy.proxy_send_timeout=300s"
+      - "com.nginxproxy.client_max_body_size=100m"
+    restart: unless-stopped
+ 
+
+
+
+
+  mongo:
+    image: mongo:6.0
+    container_name: mongo
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_INITDB_ROOT_USERNAME}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD}
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "127.0.0.1:27017:27017"
+    mem_limit: 256m
+    cpus: 0.3
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "127.0.0.1:6379:6379"
+    restart: unless-stopped
+    mem_limit: 64m
+    cpus: 0.1
+    logging:
+      driver: json-file
+      options:
+        max-size: "2m"
+        max-file: "1"
+
+  celery_worker:
+    build:
+      context: .
+    container_name: celery_worker
+    command: celery -A tasks.celery worker --loglevel=info --queues=celery,jmeter,scheduler,gemini
+    env_file:
+      - .env
+    depends_on:
+      - flask_app
+      - mongo
+      - redis
+    volumes:
+      - /home/ec2-user/jmeter-data:/app/data
+      - /opt/apache-jmeter-5.6.3:/opt/apache-jmeter-5.6.3
+      - /usr/lib/jvm/java-17-amazon-corretto:/usr/lib/jvm/java-17-amazon-corretto
+      - /usr/bin/curl:/usr/bin/curl:ro
+    environment:
+      - JAVA_HOME=/usr/lib/jvm/java-17-amazon-corretto
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+
+  celery_beat:
+    build:
+      context: .
+    container_name: celery_beat
+    command: celery -A tasks.celery beat --loglevel=info
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - flask_app
+    restart: unless-stopped
+
+
+
+
+volumes:
+  mongo_data:
+  jenkins_home:
+
+
+
