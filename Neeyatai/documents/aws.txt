@@ -1,0 +1,17 @@
+To enter the aws ec2 instance : ssh -i jmeter-key.pem ec2-user@51.20.80.84
+
+After making changes in code (start fresh) : sudo ./clean_and_up.sh
+After making changes in code (quick start) : sudo ./quick-clean.sh
+
+Transferring files from ec2 to local storage : scp -i .\jmeter-key.pem -r ec2-user@51.20.80.84:/home/ec2-user/jmeter .\jmeter
+
+Cheking Volumes : df -hT
+
+Lists running containers of docker : sudo docker ps
+
+Checking logs of flask : sudo docker logs --since 3m flask_app
+
+Checking mongodb (put this in mongo compass) : mongodb://admin:admin123@localhost:27018/jmeter_tool?authSource=admin
+
+Checking mongodb ssh tunnel (put this in cmd) : ssh -i jmeter-key.pem -L 27018:127.0.0.1:27017 ec2-user@51.20.80.84
+
